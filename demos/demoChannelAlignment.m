@@ -6,12 +6,13 @@
 %
 % Channel layout:
 %   Ch 1 (reference) : ER tubule network
-%   Ch 2             : Ch1 shifted +12 x, +8 y  + ER bodies blended in
-%   Ch 3             : Ch1 shifted  -9 x, -6 y  + ER bodies blended in
+%   Ch 2             : Ch1 displaced +12 x, +8 y  + ER bodies blended in
+%   Ch 3             : Ch1 displaced  -9 x, -6 y  + ER bodies blended in
 %
-% True offsets (relative to Ch1):
-%   Ch 2: horizontal = +12, vertical = +8
-%   Ch 3: horizontal =  -9, vertical = -6
+% estimateChannelOffsets returns the CORRECTION transforms (moving→fixed),
+% which are the negatives of the applied displacements:
+%   Ch 2 correction: horizontal = -12, vertical = -8
+%   Ch 3 correction: horizontal =  +9, vertical = +6
 
 %% ---- Build synthetic channels ------------------------------------------
 sz = [128, 128];
@@ -50,12 +51,21 @@ channelMask = logical([0 1 1]);   % estimate for ch2 and ch3
 
 offsets = estimateChannelOffsets(im5D, refChannel, channelMask);
 
+% True corrections = negatives of applied displacements
+trueH2 = -12;  trueV2 = -8;
+trueH3 =   9;  trueV3 =  6;
+
 fprintf('\n--- Channel offset estimation ---\n');
-fprintf('True offsets  : Ch2 horiz=%+.1f  vert=%+.1f  |  Ch3 horiz=%+.1f  vert=%+.1f\n', ...
+fprintf('Applied displacement : Ch2 horiz=%+.1f  vert=%+.1f  |  Ch3 horiz=%+.1f  vert=%+.1f\n', ...
     12, 8, -9, -6);
-fprintf('Estimated     : Ch2 horiz=%+.2f  vert=%+.2f  |  Ch3 horiz=%+.2f  vert=%+.2f\n', ...
+fprintf('True correction      : Ch2 horiz=%+.1f  vert=%+.1f  |  Ch3 horiz=%+.1f  vert=%+.1f\n', ...
+    trueH2, trueV2, trueH3, trueV3);
+fprintf('Estimated correction : Ch2 horiz=%+.2f  vert=%+.2f  |  Ch3 horiz=%+.2f  vert=%+.2f\n', ...
     offsets.horizontal(2), offsets.vertical(2), ...
     offsets.horizontal(3), offsets.vertical(3));
+fprintf('Error (px)           : Ch2 horiz=%+.2f  vert=%+.2f  |  Ch3 horiz=%+.2f  vert=%+.2f\n', ...
+    offsets.horizontal(2)-trueH2, offsets.vertical(2)-trueV2, ...
+    offsets.horizontal(3)-trueH3, offsets.vertical(3)-trueV3);
 
 imAligned = alignChannels(im5D, offsets);
 
