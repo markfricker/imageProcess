@@ -1,0 +1,12 @@
+# MATLAB
+*.asv
+*.m~
+*.mex*
+*.mlappinstall
+*.prj
+resources/
+
+# Temp / OS
+.DS_Store
+Thumbs.db
+desktop.ini
