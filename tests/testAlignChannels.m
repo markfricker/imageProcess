@@ -46,32 +46,31 @@ classdef testAlignChannels < matlab.unittest.TestCase
         end
 
         function testEstimateRecoversTrueOffset(tc)
-            % ch1 = tubule network; ch2 = ch1 warped +8 x, -5 y
-            % estimateChannelOffsets should recover horizontal~8, vertical~-5
-            % for ch2 within 2 px.
+            % ch2 is ch1 displaced +8 px right, -5 px up (ty=-5 → upward shift).
+            % imregtform returns the CORRECTION transform (moving→fixed), which
+            % is the opposite sign: horizontal≈-8, vertical≈+5.
+            % alignChannels then applies this correction to realign ch2 onto ch1.
             sz = [64, 64];
-            ch1 = generateTubuleNetwork(sz, 20, 1.5, 0.02, 99);
-            ch1s = single(ch1);
+            ch1s = single(generateTubuleNetwork(sz, 20, 1.5, 0.02, 99));
 
-            % Apply known warp to create ch2: +8 columns, -5 rows
+            % Displace ch2 right 8, up 5 (affine2d tx=+8, ty=-5)
             T = eye(3);
-            T(3,1) =  8;   % horizontal (x)
-            T(3,2) = -5;   % vertical   (y)
-            tform  = affine2d(T);
-            ref2d  = imref2d(sz);
-            ch2s   = imwarp(ch1s, tform, 'OutputView', ref2d, 'SmoothEdges', true);
+            T(3,1) =  8;
+            T(3,2) = -5;
+            ch2s = imwarp(ch1s, affine2d(T), 'OutputView', imref2d(sz), ...
+                          'SmoothEdges', true);
 
-            % Pack into [nY nX nC nZ nT]
             imIn = zeros(64, 64, 2, 1, 1, 'single');
             imIn(:,:,1,1,1) = ch1s;
             imIn(:,:,2,1,1) = ch2s;
 
             offsets = estimateChannelOffsets(imIn, 1, logical([0 1]));
 
-            tc.verifyLessThanOrEqual(abs(offsets.horizontal(2) - 8), 2, ...
-                'Estimated horizontal offset for ch2 should be within 2 px of 8.');
-            tc.verifyLessThanOrEqual(abs(offsets.vertical(2) - (-5)), 2, ...
-                'Estimated vertical offset for ch2 should be within 2 px of -5.');
+            % Correction is the inverse of the displacement: h≈-8, v≈+5
+            tc.verifyLessThanOrEqual(abs(offsets.horizontal(2) - (-8)), 2, ...
+                'Estimated horizontal correction for ch2 should be within 2 px of -8.');
+            tc.verifyLessThanOrEqual(abs(offsets.vertical(2) - 5), 2, ...
+                'Estimated vertical correction for ch2 should be within 2 px of +5.');
         end
 
     end % methods (Test)
