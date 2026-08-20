@@ -39,10 +39,21 @@ cMap  = double(p.channelMap(1:6));
 cLink = double(p.channelLink(1:6));
 cNorm = logical(p.channelNorm(1:6));
 
-% ---- per-channel intensity range ----------------------------------------
+% ---- per-channel intensity range (only channels actually consumed below:
+% a channel normalised directly, or linked-to by one that is) -------------
+needsRange = false(1, nC);
+for iC = 1:min(6, nC)
+    if cNorm(iC)
+        needsRange(iC) = true;
+        iL = cLink(iC);
+        if iL >= 1 && iL <= nC
+            needsRange(iL) = true;
+        end
+    end
+end
 minC = zeros(1, nC, 'double');
 maxC = zeros(1, nC, 'double');
-for iC = 1:nC
+for iC = find(needsRange)
     minC(iC) = double(min(imIn(:,:,iC,:,:), [], 'all'));
     maxC(iC) = double(max(imIn(:,:,iC,:,:), [], 'all'));
 end
