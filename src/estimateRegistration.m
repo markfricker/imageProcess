@@ -19,6 +19,13 @@ function tforms = estimateRegistration(imIn, p)
 %                               others use imregtform (intensity-based).
 %            p.reference      – 'first' | 'previous'; which frame is the
 %                               fixed reference for each moving frame.
+%                               With 'previous' the frame-to-frame
+%                               transforms are chained, so the returned
+%                               transform still maps each frame onto
+%                               frame 1 (use it when the sample changes
+%                               too much for every frame to match frame 1).
+%                               Any other transform name (e.g. 'manual')
+%                               is an error.
 %            p.smoothUse      – logical; Gaussian pre-filter before matching.
 %            p.smooth         – scalar; sigma for imgaussfilt pre-filter.
 %            p.gradientUse    – logical; use image gradient magnitude instead
@@ -38,11 +45,18 @@ function tforms = estimateRegistration(imIn, p)
 %   'translation', 'rigid', 'similarity', 'affine' use imregtform.
 %   Set p.transform = 'rigid' for standard time-lapse drift correction.
 
-[nY, nX, ~, ~, nT] = size(imIn);
+[nY, nX, ~, ~, nT] = size(imIn); %#ok<ASGLU>
 
 rect    = p.roi;
 channel = p.channel;
 method  = p.transform;
+
+supported = {'translation', 'rigid', 'similarity', 'affine', 'SURF', 'MSER'};
+if ~any(strcmp(method, supported))
+    error('estimateRegistration:unsupportedTransform', ...
+        'Transform ''%s'' is not supported; use one of: %s.', method, strjoin(supported, ', '));
+end
+previousRef = strcmpi(p.reference, 'previous');
 
 tforms      = cell(1, nT);
 tforms{1}   = affine2d;          % identity for first frame
@@ -61,7 +75,7 @@ fixedRefObj = imref2d( ...
 for iT = 2:nT
 
     % Update fixed reference when using 'previous' mode
-    if strcmpi(p.reference, 'previous') && iT > 2
+    if previousRef && iT > 2
         fixedRaw = squeeze(imIn( ...
             rect(2) : rect(2)+rect(4), ...
             rect(1) : rect(1)+rect(3), ...
@@ -123,10 +137,33 @@ for iT = 2:nT
             end
     end
 
+    % 'previous': tform maps frame iT onto frame iT-1 only. Chain it with the
+    % transform of frame iT-1 (which maps that frame onto frame 1) so every
+    % returned transform maps its frame onto frame 1, as registerImage
+    % applies each one independently. Without this the frame-to-frame
+    % shifts were never accumulated and slow drift was not removed.
+    if previousRef && iT > 2
+        tform = affinetform2d(tformMatrix(tforms{iT-1}) * tformMatrix(tform));
+    end
+
     tforms{iT} = tform;
 end
 
 end % estimateRegistration
+
+
+% =========================================================================
+function A = tformMatrix(tf)
+%TFORMMATRIX  3x3 matrix of a 2-D geometric transform, premultiply convention
+% (x' = A*[x; y; 1]), for both the current objects (affinetform2d,
+% rigidtform2d, simtform2d, transltform2d: property A) and legacy affine2d
+% (property T, postmultiply).
+if isprop(tf, 'A')
+    A = tf.A;
+else
+    A = tf.T';
+end
+end
 
 
 % =========================================================================
