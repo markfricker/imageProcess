@@ -10,7 +10,8 @@ function imOut = correctBackground(imIn, p, bgStats)
 %   'none'       – pass-through
 %   'subtract'   – subtract scalar mean from bgStats (single/each T/mean T)
 %   'opening'    – morphological top-hat (imtophat)
-%   'reconstruct'– morphological reconstruction (imerode + imreconstruct)
+%   'reconstruct'– top-hat by reconstruction: image minus its opening by
+%                  reconstruction (imerode + imreconstruct)
 %   'sub low pass'– open → low-pass → subtract (pad/unpad)
 %   'surface fit'– fit surface to regional minima, subtract (requires
 %                  Curve Fitting Toolbox)
@@ -75,8 +76,21 @@ for iT = 1:nT
                     temp = imtophat(im, SE);
 
                 case 'reconstruct'
+                    % top-hat by reconstruction: the opening by
+                    % reconstruction (erode, then grow back under the
+                    % image) keeps the background and every structure
+                    % wider than the disk, with its true shape; subtracting
+                    % it leaves the narrower structures. (Before 2026-09-28
+                    % this returned the reconstruction itself -- the
+                    % background estimate, not the corrected image -- as
+                    % AnalyzER v2 did.)
                     Io   = imerode(im, SE);
-                    temp = imreconstruct(Io, im);
+                    bg   = imreconstruct(Io, im);
+                    if isinteger(im)
+                        temp = imsubtract(im, bg);
+                    else
+                        temp = im - bg;
+                    end
 
                 case 'sub low pass'
                     im2  = padarray(im, [r r], 'replicate');
