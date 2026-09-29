@@ -31,12 +31,26 @@ function imOut = projectImage(imIn, p)
 %   edof_fuse function (supplied in utils/).
 
 [nY, nX, nC, ~, nT] = size(imIn);
-imOut = zeros(nY, nX, nC, 1, nT, 'like', imIn);
 
 singleC = p.singleChannels(1:nC);
 edfC    = p.edfChannels(1:nC);
 inputC  = p.inputChannels(1:nC);
 applyC  = p.applyChannels(1:nC);
+
+% EDF method 'none' = no EDF: the channels ticked for EDF are projected
+% with the global method like the rest (before 2026-09-29 they came out
+% blank -- edf 'none' had no case below)
+if strcmpi(p.edfMethod, 'none')
+    edfC(:) = false;
+end
+% global method 'none' with no single-plane or EDF channels = no projection
+% at all: the stack is returned unchanged (before 2026-09-29 the output was
+% a blank single plane)
+if strcmpi(p.method, 'none') && ~any(singleC | edfC)
+    imOut = imIn;
+    return
+end
+imOut = zeros(nY, nX, nC, 1, nT, 'like', imIn);
 
 % --- Global projection (channels not reserved for single or EDF) ----------
 if any(~(singleC | edfC))

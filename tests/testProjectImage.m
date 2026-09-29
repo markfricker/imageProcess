@@ -80,6 +80,37 @@ classdef testProjectImage < matlab.unittest.TestCase
                 'Single-plane channel 1 should equal Z=3 of input channel 1.');
         end
 
+        function testNoneWithoutAssignmentsPassesThrough(tc)
+            % method='none' and no single/EDF channels -> stack unchanged
+            p = tc.pBase;
+            p.method = 'none';
+            imOut = projectImage(tc.im5D, p);
+            tc.verifyEqual(imOut, tc.im5D, ...
+                'method none with no single/EDF channels should return the stack unchanged.');
+        end
+
+        function testEdfNoneUsesGlobalMethod(tc)
+            % edfMethod='none' -> EDF-ticked channels get the global projection
+            p = tc.pBase;
+            p.method      = 'max';
+            p.edfChannels = [true false];
+            p.edfMethod   = 'none';
+            imOut = projectImage(tc.im5D, p);
+            tc.verifyEqual(imOut, max(tc.im5D, [], 4), 'AbsTol', single(1e-5), ...
+                'With EDF method none, EDF channels should get the global max projection.');
+        end
+
+        function testMeanPlusMaxPlane(tc)
+            % 'mean + max plane': apply channels from the max plane, others mean
+            p = tc.pBase;
+            p.method        = 'mean + max plane';
+            p.inputChannels = [true false];
+            p.applyChannels = [true false];
+            imOut = projectImage(tc.im5D, p);
+            tc.verifyEqual(imOut(:,:,2,1,:), mean(tc.im5D(:,:,2,:,:), 4), 'AbsTol', single(1e-5), ...
+                'Non-apply channel should get the mean projection.');
+        end
+
         function testOutputClassPreserved(tc)
             % Output class should match input class
             imOut = projectImage(tc.im5D, tc.pBase);
