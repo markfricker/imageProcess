@@ -29,7 +29,8 @@ function [depthMean, depthWeight] = estimateDepth(imIn, roi, mode)
 %                expected to place this ROI over the object of interest --
 %                no separate cell/object mask is required or used (none
 %                exists yet at this point in the pipeline anyway).
-%   mode       – (optional) 'mean' (default) | 'foreground':
+%   mode       – (optional) 'mean' (default) | 'foreground' |
+%                'foreground per section':
 %                  'mean'       – average over EVERY pixel in the ROI at
 %                                 each Z-plane (original behaviour). Only
 %                                 valid when the object's occupancy of the
@@ -48,20 +49,34 @@ function [depthMean, depthWeight] = estimateDepth(imIn, roi, mode)
 %                  'foreground' – averages only pixels above a SINGLE
 %                                 threshold computed once from the whole
 %                                 pooled ROI (all Z, all T) and applied
-%                                 IDENTICALLY to every Z-plane. This is
-%                                 deliberately NOT a per-Z-plane adaptive
-%                                 threshold: an adaptive threshold would
-%                                 always select "the brightest fraction of
-%                                 whatever is in this plane", which would
-%                                 flatten out -- not measure -- the very
-%                                 attenuation curve this function exists
-%                                 to estimate. Under one fixed threshold, a
-%                                 plane with genuinely less/dimmer object
-%                                 correctly contributes fewer pixels (or a
-%                                 lower mean), removing the occupancy
-%                                 confound 'mean' has. Falls back to the
-%                                 whole-ROI mean for any Z-plane with zero
-%                                 pixels above threshold, rather than NaN.
+%                                 IDENTICALLY to every Z-plane. A plane
+%                                 with less object contributes fewer
+%                                 pixels, removing the occupancy confound
+%                                 'mean' has. But as planes dim, only the
+%                                 brightest object pixels clear the fixed
+%                                 threshold, so for an object with a wide
+%                                 intensity range (e.g. ER) the curve
+%                                 under-states the dimming (synthetic ER
+%                                 stack dimmed to 21%: fit reaches 44%).
+%                                 Falls back to the whole-ROI mean for any
+%                                 Z-plane with zero pixels above
+%                                 threshold, rather than NaN.
+%                  'foreground per section'
+%                               – Otsu threshold computed separately for
+%                                 each Z-plane (pooled over T), averaging
+%                                 the RAW intensities above it. The
+%                                 threshold only selects pixels; their raw
+%                                 mean still scales with the plane's
+%                                 dimming, so the curve is not flattened,
+%                                 and the same share of the object is kept
+%                                 at every depth (same ER stack: 24% vs a
+%                                 true 21%). A plane past the end of the
+%                                 object is pure noise, which Otsu still
+%                                 splits in two: a plane whose foreground-
+%                                 minus-background mean is under 5% of the
+%                                 largest in the stack is treated as empty
+%                                 (weight eps, like 'foreground's
+%                                 fallback).
 %                Not a complete fix for every geometry/modality (e.g. a
 %                non-optically-sectioned modality where the object's local
 %                path-length through the focal slice itself varies with
@@ -73,7 +88,8 @@ function [depthMean, depthWeight] = estimateDepth(imIn, roi, mode)
 %                 Returns [] if the ROI is provided but invalid.
 %   depthWeight – [nC × nZ] double; number of pixels behind each
 %                 depthMean entry (w*h*nT for 'mean', always the same at
-%                 every Z; the foreground pixel count for 'foreground',
+%                 every Z; the foreground pixel count for the foreground
+%                 modes,
 %                 which can vary hugely by Z-plane -- pass this to
 %                 correctDepth so its exponential fits weight a precise,
 %                 many-pixel estimate more than a noisy few-pixel one,
@@ -144,8 +160,32 @@ switch lower(mode)
             end
         end
 
+    case 'foreground per section'
+        depthMean   = zeros(nC, nZ);
+        depthWeight = zeros(nC, nZ);
+        minContrast = 0.05;   % of the stack's largest fg-bg difference; below = no object
+        for iC = 1:nC
+            contrast = zeros(1, nZ);
+            for iZ = 1:nZ
+                planeOrig = double(squeeze(roiVol(:,:,iC,iZ,:)));   % [h w nT]
+                fgMask    = planeOrig > graythresh(mat2gray(planeOrig)) * ...
+                    (max(planeOrig(:)) - min(planeOrig(:))) + min(planeOrig(:));
+                if any(fgMask(:)) && ~all(fgMask(:))
+                    depthMean(iC,iZ)   = mean(planeOrig(fgMask));
+                    depthWeight(iC,iZ) = nnz(fgMask);
+                    contrast(iZ)       = depthMean(iC,iZ) - mean(planeOrig(~fgMask));
+                else
+                    depthMean(iC,iZ)   = mean(planeOrig(:));   % flat plane: nothing to split
+                end
+            end
+            % A plane of pure noise is still split in two by Otsu, but its
+            % fg-bg difference is a small fraction of an object plane's.
+            isEmpty = contrast < minContrast * max(contrast);
+            depthWeight(iC, isEmpty) = eps;
+        end
+
     otherwise
         error('estimateDepth:unknownMode', ...
-            'Unknown mode "%s". Use ''mean'' or ''foreground''.', mode);
+            'Unknown mode "%s". Use ''mean'', ''foreground'' or ''foreground per section''.', mode);
 end
 end
