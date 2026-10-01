@@ -1,7 +1,8 @@
-function [imOut, results] = correctDepth(imIn, depthMean, p)
+function [imOut, results] = correctDepth(imIn, depthMean, p, depthWeight)
 %CORRECTDEPTH  Correct depth-dependent intensity attenuation from a Z-stack image.
 %
 %   [imOut, results] = correctDepth(imIn, depthMean, p)
+%   [imOut, results] = correctDepth(imIn, depthMean, p, depthWeight)
 %
 % Estimates per-plane, per-channel correction factors from a depth-
 % attenuation curve (depthMean from estimateDepth) and applies them to the
@@ -25,15 +26,27 @@ function [imOut, results] = correctDepth(imIn, depthMean, p)
 %   'exponential' and 'double exponential' require Curve Fitting Toolbox.
 %
 % INPUTS
-%   imIn       – [nY nX nC nZ nT] numeric array
-%   depthMean  – [nC × nZ] double from estimateDepth (one curve per
-%                channel, pooled over the whole time series)
-%   p          – parameter struct:
-%                  p.method     – method string (see above)
-%                  p.norm2Start – logical; true = normalise to Z=1
-%                                 (shallowest plane), false = normalise to
-%                                 the last (deepest) plane
-%                  p.channels   – [1×nC] logical; which channels to correct
+%   imIn        – [nY nX nC nZ nT] numeric array
+%   depthMean   – [nC × nZ] double from estimateDepth (one curve per
+%                 channel, pooled over the whole time series)
+%   p           – parameter struct:
+%                   p.method     – method string (see above)
+%                   p.norm2Start – logical; true = normalise to Z=1
+%                                  (shallowest plane), false = normalise to
+%                                  the last (deepest) plane
+%                   p.channels   – [1×nC] logical; which channels to correct
+%   depthWeight – (optional) [nC × nZ] double, the depthWeight output of
+%                 estimateDepth (pixel count behind each depthMean entry).
+%                 Used as 'exponential'/'double exponential' fit weights,
+%                 since Var(mean) ~ 1/n -- a Z-plane whose mean came from
+%                 many pixels (e.g. the equator of a sphere under
+%                 'foreground' mode) is a more precise estimate than one
+%                 from a handful of pixels (near the poles) and should
+%                 pull the fitted curve harder. Omit, or pass [], for
+%                 uniform weighting (every Z-plane trusted equally) --
+%                 always correct for 'mean' mode, where every plane uses
+%                 the same pixel count anyway. Not used by 'ratio' or
+%                 'histogram match', neither of which fits across points.
 %
 % OUTPUTS
 %   imOut   – corrected array, same size as imIn, class determined by
@@ -50,6 +63,10 @@ function [imOut, results] = correctDepth(imIn, depthMean, p)
 channels = logical(p.channels(1:nC));
 z        = (1:nZ)';
 origClass = class(imIn);
+
+if nargin < 4 || isempty(depthWeight)
+    depthWeight = ones(nC, nZ);
+end
 
 % Single-plane (non-Z-stack) input: depth correction is a true no-op here,
 % not just "nothing to correct" -- the fit-based methods need at least a
@@ -95,13 +112,13 @@ switch p.method
 
     case 'exponential'
         for iC = 1:nC
-            [fitObjects{iC}, gof{iC}] = fit(z, norm(iC,:)', 'exp1');
+            [fitObjects{iC}, gof{iC}] = fit(z, norm(iC,:)', 'exp1', 'Weights', depthWeight(iC,:)');
             correctionFactor(iC,:)    = 1 ./ feval(fitObjects{iC}, z)';
         end
 
     case 'double exponential'
         for iC = 1:nC
-            [fitObjects{iC}, gof{iC}] = fit(z, norm(iC,:)', 'exp2');
+            [fitObjects{iC}, gof{iC}] = fit(z, norm(iC,:)', 'exp2', 'Weights', depthWeight(iC,:)');
             correctionFactor(iC,:)    = 1 ./ feval(fitObjects{iC}, z)';
         end
 

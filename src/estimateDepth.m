@@ -1,8 +1,9 @@
-function depthMean = estimateDepth(imIn, roi, mode)
+function [depthMean, depthWeight] = estimateDepth(imIn, roi, mode)
 %ESTIMATEDEPTH  Measure per-Z-plane intensity to characterise depth-dependent attenuation.
 %
 %   depthMean = estimateDepth(imIn, roi)
 %   depthMean = estimateDepth(imIn, roi, mode)
+%   [depthMean, depthWeight] = estimateDepth(imIn, roi, mode)
 %
 % Computes an intensity curve across Z, within an ROI (or the full frame),
 % for each channel, pooled over the WHOLE time series (all T). Mirrors
@@ -68,8 +69,16 @@ function depthMean = estimateDepth(imIn, roi, mode)
 %                dominant occupancy effect.
 %
 % OUTPUT
-%   depthMean  – [nC × nZ] double; intensity per channel per Z-plane
-%                Returns [] if the ROI is provided but invalid.
+%   depthMean   – [nC × nZ] double; intensity per channel per Z-plane
+%                 Returns [] if the ROI is provided but invalid.
+%   depthWeight – [nC × nZ] double; number of pixels behind each
+%                 depthMean entry (w*h*nT for 'mean', always the same at
+%                 every Z; the foreground pixel count for 'foreground',
+%                 which can vary hugely by Z-plane -- pass this to
+%                 correctDepth so its exponential fits weight a precise,
+%                 many-pixel estimate more than a noisy few-pixel one,
+%                 rather than treating every Z-plane's mean as equally
+%                 trustworthy regardless of how many pixels it came from).
 %
 % See also: correctDepth, estimateBleach (the time-domain analogue)
 
@@ -77,7 +86,7 @@ if nargin < 3 || isempty(mode)
     mode = 'mean';
 end
 
-[nY, nX, nC, nZ, ~] = size(imIn);
+[nY, nX, nC, nZ, nT] = size(imIn);
 
 if isempty(roi)
     % Full-frame measurement
@@ -87,7 +96,8 @@ else
 end
 
 if isempty(pos) || ~all(pos(1:4))
-    depthMean = [];
+    depthMean   = [];
+    depthWeight = [];
     return
 end
 
@@ -98,9 +108,11 @@ switch lower(mode)
     case 'mean'
         depthMean = squeeze(mean(roiVol, [1 2 5]));          % pools space + T -> [nC × nZ]
         depthMean = reshape(depthMean, nC, nZ);
+        depthWeight = repmat(w*h*nT, nC, nZ);                % every Z-plane uses the same pixel count
 
     case 'foreground'
-        depthMean = zeros(nC, nZ);
+        depthMean   = zeros(nC, nZ);
+        depthWeight = zeros(nC, nZ);
         for iC = 1:nC
             chanVol  = squeeze(roiVol(:,:,iC,:,:));   % [h w nZ nT]
             % ONE threshold from the whole pooled channel volume -- not
@@ -112,10 +124,22 @@ switch lower(mode)
                 planeNorm = normVol(:,:,iZ,:);
                 planeOrig = chanVol(:,:,iZ,:);
                 fgMask    = planeNorm > thresh;
-                if any(fgMask(:))
-                    depthMean(iC,iZ) = mean(planeOrig(fgMask));
+                nFg       = nnz(fgMask);
+                if nFg > 0
+                    depthMean(iC,iZ)   = mean(planeOrig(fgMask));
+                    depthWeight(iC,iZ) = nFg;
                 else
-                    depthMean(iC,iZ) = mean(planeOrig(:));   % nothing above threshold at this depth
+                    % Nothing above threshold at this depth: the fallback
+                    % mean is pure background/noise, not a measurement of
+                    % the attenuation curve's value here -- give it a
+                    % near-zero weight (not exactly zero, to avoid an
+                    % all-zero weight vector if this happens at every Z)
+                    % so a weighted fit effectively ignores it, rather
+                    % than the opposite mistake of treating "the whole
+                    % plane went into this mean" as if it were the MOST
+                    % trustworthy point.
+                    depthMean(iC,iZ)   = mean(planeOrig(:));
+                    depthWeight(iC,iZ) = eps;
                 end
             end
         end
