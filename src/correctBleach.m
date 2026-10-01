@@ -6,7 +6,16 @@ function [imOut, results] = correctBleach(imIn, bleachMean, p)
 % Estimates per-frame, per-channel correction factors from a bleaching
 % curve (bleachMean from estimateBleach) and applies them to the image.
 % Output intensities are normalised to [0,1] via mat2gray before scaling.
-% Only Z=1 is processed (assumes projected or single-Z input).
+%
+% ONE correction factor per (channel, frame) is applied UNIFORMLY to every
+% Z-plane: standard photobleaching is a global photophysical depletion
+% over TIME, not a function of depth, so a single curve per channel is the
+% right model (a separate depth-dependent intensity correction, if added,
+% would have its own per-Z profile instead). Before 2026-10-01 this
+% function silently processed Z=1 only AND left every other Z-plane as
+% all-zero in the output (temp was pre-allocated over the full size but
+% only ever written at index 1) -- i.e. real data loss on a genuine
+% Z-stack with Project disabled, not just "unsupported".
 %
 % METHODS
 %   'ratio'            – correction = 1 / normalised_mean(t)
@@ -18,8 +27,9 @@ function [imOut, results] = correctBleach(imIn, bleachMean, p)
 %   'exponential' and 'double exponential' require Curve Fitting Toolbox.
 %
 % INPUTS
-%   imIn       – [nY nX nC nZ nT] numeric array (nZ=1 expected)
-%   bleachMean – [nC × nT] double from estimateBleach
+%   imIn       – [nY nX nC nZ nT] numeric array
+%   bleachMean – [nC × nT] double from estimateBleach (one curve per
+%                channel, already pooled over Z per its own zSource)
 %   p          – parameter struct:
 %                  p.method     – method string (see above)
 %                  p.norm2Start – logical; true = normalise to frame 1,
@@ -35,7 +45,7 @@ function [imOut, results] = correctBleach(imIn, bleachMean, p)
 %               results.fitObjects       – {1×nC} cfit objects (exp methods only)
 %               results.gof              – {1×nC} goodness-of-fit (exp methods only)
 
-[~, ~, nC, ~, nT] = size(imIn);
+[~, ~, nC, nZ, nT] = size(imIn);
 channels = logical(p.channels(1:nC));
 x        = (1:nT)';
 origClass = class(imIn);
@@ -53,10 +63,16 @@ correctionFactor = ones(nC, nT);
 fitObjects       = cell(1, nC);
 gof              = cell(1, nC);
 
-% Working copy as double for mat2gray
+% Working copy as double for mat2gray, every Z-plane (not just Z=1 --
+% see header). mat2gray's own min/max is taken per (channel, Z-plane)
+% across the whole T range, pooling the most pixels available while still
+% keeping each Z-plane's own intensity scale internally consistent across
+% time (matches the original per-channel design, extended per-Z).
 temp = zeros(size(imIn));
-for iC = 1:nC
-    temp(:,:,iC,1,:) = mat2gray(imIn(:,:,iC,1,:));
+for iZ = 1:nZ
+    for iC = 1:nC
+        temp(:,:,iC,iZ,:) = mat2gray(imIn(:,:,iC,iZ,:));
+    end
 end
 
 switch p.method
@@ -78,26 +94,33 @@ switch p.method
         end
 
     case 'histogram match'
-        ref = squeeze(imIn(:,:,:,1,1));
-        for iC = 1:nC
-            if channels(iC)
-                for iT = 1:nT
-                    temp(:,:,iC,1,iT) = mat2gray( ...
-                        imhistmatch(imIn(:,:,iC,1,iT), ref(:,:,iC)));
+        % Each Z-plane is matched to ITS OWN first-frame reference, not a
+        % single plane's histogram applied across the whole stack.
+        for iZ = 1:nZ
+            ref = squeeze(imIn(:,:,:,iZ,1));
+            for iC = 1:nC
+                if channels(iC)
+                    for iT = 1:nT
+                        temp(:,:,iC,iZ,iT) = mat2gray( ...
+                            imhistmatch(imIn(:,:,iC,iZ,iT), ref(:,:,iC)));
+                    end
                 end
             end
         end
-        tempMean = squeeze(mean(temp, [1 2 4]));    % [nC × nT]
+        tempMean = squeeze(mean(temp, [1 2 4]));    % pooled over space+Z -> [nC × nT]
         tempMean = reshape(tempMean, nC, nT);
         correctionFactor = tempMean ./ bleachMean;
 end
 
 % Apply correction factors (except histogram match which already did it)
+% to every Z-plane uniformly.
 if ~strcmp(p.method, 'histogram match')
     for iC = 1:nC
         if channels(iC)
             cf = reshape(correctionFactor(iC,:), 1, 1, 1, 1, nT);
-            temp(:,:,iC,1,:) = temp(:,:,iC,1,:) .* cf;
+            for iZ = 1:nZ
+                temp(:,:,iC,iZ,:) = temp(:,:,iC,iZ,:) .* cf;
+            end
         end
     end
 end
