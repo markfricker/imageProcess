@@ -135,14 +135,17 @@ correctionFactor = ones(nC, nZ);
 fitObjects       = cell(1, nC);
 gof              = cell(1, nC);
 
-% Working copy as double for mat2gray, every Z-plane. mat2gray's own
-% min/max is taken per (channel, Z-plane) across the whole T range,
-% pooling the most pixels available while keeping each plane's own
-% intensity scale internally consistent across time.
+% Working copy as double for mat2gray. mat2gray's min/max is taken per
+% (channel, T-frame) across the WHOLE Z-stack, so the planes keep their
+% relative brightness -- the depth curve the factors below correct. (The
+% mirror of correctBleach, which scales per (channel, Z-plane) across T.)
+% Scaling each Z-plane separately would already flatten most of the
+% attenuation, and the factors would then over-correct the deep planes.
+nT = size(imIn, 5);
 temp = zeros(size(imIn));
-for iZ = 1:nZ
+for iT = 1:nT
     for iC = 1:nC
-        temp(:,:,iC,iZ,:) = mat2gray(imIn(:,:,iC,iZ,:));
+        temp(:,:,iC,:,iT) = mat2gray(imIn(:,:,iC,:,iT));
     end
 end
 
@@ -171,7 +174,6 @@ switch p.method
         for iZ = 1:nZ
             for iC = 1:nC
                 if channels(iC)
-                    nT = size(imIn,5);
                     for iT = 1:nT
                         temp(:,:,iC,iZ,iT) = mat2gray( ...
                             imhistmatch(imIn(:,:,iC,iZ,iT), ref(:,:,iC)));
