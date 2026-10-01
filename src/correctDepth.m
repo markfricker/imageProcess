@@ -56,6 +56,23 @@ function [imOut, results] = correctDepth(imIn, depthMean, p, depthWeight)
 %               results.norm             – [nC × nZ] normalised depth curve
 %               results.fitObjects       – {1×nC} cfit objects (exp methods only)
 %               results.gof              – {1×nC} goodness-of-fit (exp methods only)
+%               results.normRefWarning   – '' if fine, else a message naming
+%                                          which channel(s) have an unstable
+%                                          normalisation reference (see below)
+%
+% NORMALISATION REFERENCE STABILITY (p.norm2Start)
+%   'ratio'/'exponential'/'double exponential' all normalise the curve by
+%   dividing by the reference plane's value (Z=1 or Z=end) before fitting/
+%   inverting. If that reference plane happens to be close to zero (e.g.
+%   genuinely no signal there -- an out-of-focus or background-only edge
+%   plane), every OTHER plane's correctionFactor = normRef/value collapses
+%   toward zero, crushing the corrected image everywhere except at the
+%   reference plane itself -- not a subtle effect, a "daft multiplier".
+%   This is detected (reference < 10% of the channel's own peak) and
+%   returned in results.normRefWarning (and raised via warning()) rather
+%   than silently producing a badly-scaled correction; it does not block
+%   the correction (the caller decides what to do -- e.g. offer to
+%   normalise to the other end instead).
 %
 % See also: estimateDepth, correctBleach (the time-domain analogue)
 
@@ -77,17 +94,42 @@ if nZ <= 1
     results.norm             = ones(nC, 1);
     results.fitObjects       = cell(1, nC);
     results.gof              = cell(1, nC);
+    results.normRefWarning   = '';
     return
 end
 
 % Normalise depth curve
 if p.norm2Start
     normRef = depthMean(:, 1);
+    refLabel = 'first (Z=1)';
 else
     normRef = depthMean(:, end);
+    refLabel = 'last (deepest)';
 end
-normRef(normRef == 0) = 1;   % guard against zero reference
+normRefRaw = normRef;   % pre-guard, for the stability check below
+normRef(normRef == 0) = 1;   % guard against exact-zero reference (division)
 norm = depthMean ./ normRef;
+
+% See header: a reference point close to zero (not just exactly zero)
+% still makes every other plane's correction factor collapse toward zero
+% once inverted. Flag it rather than silently returning a badly-scaled
+% correction -- it does not block the method the caller asked for.
+normRefWarning = '';
+if ~strcmp(p.method, 'histogram match')
+    peakVal = max(depthMean, [], 2);
+    smallRefFrac = 0.1;   % reference point is < 10% of this channel's own peak
+    isBadRef = channels(:) & (normRefRaw < smallRefFrac * peakVal);
+    if any(isBadRef)
+        normRefWarning = sprintf(['Depth correction: channel(s) %s -- the %s-plane reference value is ' ...
+            'less than %.0f%% of that channel''s peak intensity. Normalising to it will make the ' ...
+            'correction factor collapse toward zero everywhere else, crushing the corrected image. ' ...
+            'This usually means that plane has little/no real signal (e.g. an out-of-focus or ' ...
+            'background-only edge plane) -- this correction is probably not appropriate for this ' ...
+            'curve as configured; consider normalising to the other end instead.'], ...
+            mat2str(find(isBadRef)'), refLabel, 100*smallRefFrac);
+        warning('correctDepth:unstableNormReference', '%s', normRefWarning);
+    end
+end
 
 correctionFactor = ones(nC, nZ);
 fitObjects       = cell(1, nC);
@@ -168,4 +210,5 @@ results.correctionFactor = correctionFactor;
 results.norm             = norm;
 results.fitObjects       = fitObjects;
 results.gof              = gof;
+results.normRefWarning   = normRefWarning;
 end

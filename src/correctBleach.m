@@ -44,6 +44,23 @@ function [imOut, results] = correctBleach(imIn, bleachMean, p)
 %               results.norm             – [nC × nT] normalised bleach curve
 %               results.fitObjects       – {1×nC} cfit objects (exp methods only)
 %               results.gof              – {1×nC} goodness-of-fit (exp methods only)
+%               results.normRefWarning   – '' if fine, else a message naming
+%                                          which channel(s) have an unstable
+%                                          normalisation reference (see below)
+%
+% NORMALISATION REFERENCE STABILITY (p.norm2Start)
+%   'ratio'/'exponential'/'double exponential' all normalise the curve by
+%   dividing by the reference frame's value (frame 1 or last) before
+%   fitting/inverting. If that reference frame happens to be close to zero
+%   (e.g. the sample hadn't been excited/focused yet, or a dropped frame),
+%   every OTHER frame's correctionFactor = normRef/value collapses toward
+%   zero, crushing the corrected image everywhere except at the reference
+%   frame itself -- not a subtle effect, a "daft multiplier". This is
+%   detected (reference < 10% of the channel's own peak) and returned in
+%   results.normRefWarning (and raised via warning()) rather than silently
+%   producing a badly-scaled correction; it does not block the correction.
+%
+% See also: estimateBleach, correctDepth (the depth-domain analogue)
 
 [~, ~, nC, nZ, nT] = size(imIn);
 channels = logical(p.channels(1:nC));
@@ -53,11 +70,34 @@ origClass = class(imIn);
 % Normalise bleach curve
 if p.norm2Start
     normRef = bleachMean(:, 1);
+    refLabel = 'first';
 else
     normRef = bleachMean(:, end);
+    refLabel = 'last';
 end
-normRef(normRef == 0) = 1;   % guard against zero reference
+normRefRaw = normRef;   % pre-guard, for the stability check below
+normRef(normRef == 0) = 1;   % guard against exact-zero reference (division)
 norm = bleachMean ./ normRef;
+
+% See header: a reference frame close to zero (not just exactly zero)
+% still makes every other frame's correction factor collapse toward zero
+% once inverted. Flag it rather than silently returning a badly-scaled
+% correction -- it does not block the method the caller asked for.
+normRefWarning = '';
+if ~strcmp(p.method, 'histogram match')
+    peakVal = max(bleachMean, [], 2);
+    smallRefFrac = 0.1;   % reference frame is < 10% of this channel's own peak
+    isBadRef = channels(:) & (normRefRaw < smallRefFrac * peakVal);
+    if any(isBadRef)
+        normRefWarning = sprintf(['Bleach correction: channel(s) %s -- the %s-frame reference value is ' ...
+            'less than %.0f%% of that channel''s peak intensity. Normalising to it will make the ' ...
+            'correction factor collapse toward zero everywhere else, crushing the corrected image. ' ...
+            'This usually means that frame has little/no real signal -- this correction is probably ' ...
+            'not appropriate for this curve as configured; consider normalising to the other end instead.'], ...
+            mat2str(find(isBadRef)'), refLabel, 100*smallRefFrac);
+        warning('correctBleach:unstableNormReference', '%s', normRefWarning);
+    end
+end
 
 correctionFactor = ones(nC, nT);
 fitObjects       = cell(1, nC);
@@ -139,4 +179,5 @@ results.correctionFactor = correctionFactor;
 results.norm             = norm;
 results.fitObjects       = fitObjects;
 results.gof              = gof;
+results.normRefWarning   = normRefWarning;
 end
